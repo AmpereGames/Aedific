@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Aedific",
+	"Description": "Basic mesh shapes to help starting a project.",
+	"Category": "Content",
+	"CreatedBy": "Obiwan Medeiros",
+	"CreatedByURL": "https://github.com/PixaneGames",
+	"DocsURL": "https://github.com/PixaneGames/Aedific",
+	"MarketplaceURL": "",
+	"SupportURL": "https://github.com/PixaneGames/Aedific",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Sealed": true,
+	"Modules": [
+		{
+			"Name": "Aedific",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "AedificEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		}
+	]
+}
