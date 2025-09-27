@@ -2,6 +2,7 @@
 
 #include "AedificEditor.h"
 #include "AedificEditorStyle.h"
+#include "AedificSpline.h"
 
 #include <IPlacementModeModule.h>
 #include <Modules/ModuleManager.h>
@@ -19,6 +20,9 @@ void FAedificEditorModule::StartupModule()
 	// Create a custom category and register it.
 	FPlacementCategoryInfo info(INVTEXT("Aedific"), FSlateIcon("AedificEditorStyle", "Aedific.Icon"), "Aedific", TEXT("PMAedific"), 32);
 	placementModeModule.RegisterPlacementCategory(info);
+
+	// Add actor classes to the category.
+	placementModeModule.RegisterPlaceableItem(info.UniqueHandle, MakeShareable(new FPlaceableItem(nullptr, FAssetData(AAedificSpline::StaticClass()))));
 }
 
 void FAedificEditorModule::ShutdownModule()
