@@ -2,7 +2,7 @@
 
 #include "AedificEditor.h"
 #include "AedificEditorStyle.h"
-#include "AedificSpline.h"
+#include "AedificSplineContinuum.h"
 
 #include <IPlacementModeModule.h>
 #include <Modules/ModuleManager.h>
@@ -22,7 +22,7 @@ void FAedificEditorModule::StartupModule()
 	placementModeModule.RegisterPlacementCategory(info);
 
 	// Add actor classes to the category.
-	placementModeModule.RegisterPlaceableItem(info.UniqueHandle, MakeShareable(new FPlaceableItem(nullptr, FAssetData(AAedificSpline::StaticClass()))));
+	placementModeModule.RegisterPlaceableItem(info.UniqueHandle, MakeShareable(new FPlaceableItem(nullptr, FAssetData(AAedificSplineContinuum::StaticClass()))));
 }
 
 void FAedificEditorModule::ShutdownModule()

@@ -20,13 +20,13 @@ void FAedificEditorStyle::Startup()
 	FSlateImageBrush* aedificIconBrush = new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("Resources/AedificIcon"), TEXT(".png")), FVector2D(16.0f));
 	StyleSet->Set("Aedific.Icon", aedificIconBrush);
 
-	// Register icon for the AedificSpline class (for now uses the same as the placement icon).
+	// Register icon for the AedificSplineContinuum class.
 	FSlateImageBrush* splineIconBrush = new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("Resources/SplineIcon"), TEXT(".png")), FVector2D(16.0f));
-	StyleSet->Set("ClassIcon.AedificSpline", splineIconBrush);
+	StyleSet->Set("ClassIcon.AedificSplineContinuum", splineIconBrush);
 
-	// Register thumbnail for the EmpyreanSky class  (for now uses the same as the placement icon).
+	// Register thumbnail for the AedificSplineContinuum class.
 	FSlateImageBrush* splineClassBrush = new FSlateImageBrush(StyleSet->RootToContentDir(TEXT("Resources/SplineThumbnail"), TEXT(".png")), FVector2D(256.0f));
-	StyleSet->Set("ClassThumbnail.AedificSpline", splineClassBrush);
+	StyleSet->Set("ClassThumbnail.AedificSplineContinuum", splineClassBrush);
 
 	// Register the Aedific Editor Styling.
 	FSlateStyleRegistry::RegisterSlateStyle(*StyleSet.Get());
