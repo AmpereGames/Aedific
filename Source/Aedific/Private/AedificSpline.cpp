@@ -22,11 +22,10 @@ AAedificSpline::AAedificSpline()
 	SplineMeshComponents.Empty();
 	StaticMesh = nullptr;
 	DefaultStaticMesh = nullptr;
-	Material = nullptr;
-	DefaultMaterial = nullptr;
-	bInterpRoll = false;
+	OverrideMaterial = nullptr;
 	bAbsoluteUpDirection = false;
-	UpDirection = FVector::UpVector;
+	AbsoluteUpDirection = FVector::UpVector;
+	MeshSizeTreshold = 0.3f;
 	TangentScalingFactor = 1.f;
 
 	// Create scene component.
@@ -34,12 +33,18 @@ AAedificSpline::AAedificSpline()
 	RootComponent = SceneComponent;
 	SceneComponent->SetMobility(EComponentMobility::Static);
 	SceneComponent->SetComponentTickEnabled(false);
+	SceneComponent->bComputeFastLocalBounds = true;
+	SceneComponent->bComputeBoundsOnceForGame = true;
 
 	// Create spline component.
 	SplineComponent = CreateDefaultSubobject<USplineComponent>(TEXT("SplineComponent"));
 	SplineComponent->SetupAttachment(RootComponent);
 	SplineComponent->SetMobility(EComponentMobility::Static);
 	SplineComponent->SetComponentTickEnabled(false);
+	SplineComponent->SetGenerateOverlapEvents(false);
+	SplineComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SplineComponent->bComputeFastLocalBounds = true;
+	SplineComponent->bComputeBoundsOnceForGame = true;
 
 	// Fetch default mesh file.
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> floorMeshFile(TEXT("/Aedific/Meshes/SM_Floor_Decimated.SM_Floor_Decimated"));
@@ -55,8 +60,7 @@ AAedificSpline::AAedificSpline()
 	if (floorMaterialFile.Object)
 	{
 		// Assign the material to the material reference.
-		DefaultMaterial = floorMaterialFile.Object;
-		Material = DefaultMaterial;
+		OverrideMaterial = floorMaterialFile.Object;
 	}
 
 #if WITH_EDITORONLY_DATA
@@ -100,10 +104,6 @@ void AAedificSpline::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 	}
 	else if(PropertyChangedEvent.GetPropertyName() == FName(TEXT("Material")))
 	{
-		if (!Material)
-		{
-			Material = DefaultMaterial;
-		}
 		UpdateMaterials();
 	}
 }
@@ -123,46 +123,45 @@ void AAedificSpline::Rebuild()
 
 void AAedificSpline::CalculateTangents()
 {
-	const int32 PointsNum = SplineComponent->GetNumberOfSplinePoints();
-	if (PointsNum > 1)
+	const int32 PointsAmount = SplineComponent->GetNumberOfSplinePoints();
+	const bool bClosed = SplineComponent->IsClosedLoop();
+
+	if (PointsAmount > 1)
 	{
-		for (int32 i = 0; i < PointsNum; i++)
+		for (int32 i = 0; i < PointsAmount; i++)
 		{
-			const FVector P = SplineComponent->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::Local);
+			const FVector CurrentPoint = SplineComponent->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::Local);
 
 			FVector Incoming = FVector::ZeroVector;
 			FVector Outgoing = FVector::ZeroVector;
 
-			if (i == 0) // first point
+			if (bClosed || (i > 0 && i < PointsAmount - 1))
 			{
-				const FVector P1 = SplineComponent->GetLocationAtSplinePoint(1, ESplineCoordinateSpace::Local);
-				const FVector Dir = (P1 - P).GetSafeNormal();
+				// Pick neighbors, wrapping if closed.
+				const int32 PreviousIndex = (i == 0) ? (PointsAmount - 1) : (i - 1);
+				const int32 NextIndex = (i == PointsAmount - 1) ? 0 : (i + 1);
 
-				// Incoming stays zero
-				Outgoing = Dir * (P1 - P).Length() / TangentScalingFactor;
+				const FVector PreviousPoint = SplineComponent->GetLocationAtSplinePoint(PreviousIndex, ESplineCoordinateSpace::Local);
+				const FVector NextPoint = SplineComponent->GetLocationAtSplinePoint(NextIndex, ESplineCoordinateSpace::Local);
+				const FVector Direction = (NextPoint - PreviousPoint).GetSafeNormal();
+
+				Incoming = Direction * (CurrentPoint - PreviousPoint).Length() / TangentScalingFactor;
+				Outgoing = Direction * (CurrentPoint - NextPoint).Length() / TangentScalingFactor;
 			}
-			else if (i == PointsNum - 1) // last point
+			else if (i == 0) // Open spline first point.
 			{
-				const FVector Pn1 = SplineComponent->GetLocationAtSplinePoint(PointsNum - 2, ESplineCoordinateSpace::Local);
-				const FVector Dir = (P - Pn1).GetSafeNormal();
-
-				// Outgoing stays zero
-				Incoming = Dir * (P - Pn1).Length() / TangentScalingFactor;
+				const FVector FirstPoint = SplineComponent->GetLocationAtSplinePoint(1, ESplineCoordinateSpace::Local);
+				const FVector Direction = (FirstPoint - CurrentPoint).GetSafeNormal();
+				Outgoing = Direction * (FirstPoint - CurrentPoint).Length() / TangentScalingFactor;
 			}
-			else // interior point
+			else if (i == PointsAmount - 1) // Open spline last point.
 			{
-				const FVector Prev = SplineComponent->GetLocationAtSplinePoint(i - 1, ESplineCoordinateSpace::Local);
-				const FVector Next = SplineComponent->GetLocationAtSplinePoint(i + 1, ESplineCoordinateSpace::Local);
-
-				const FVector Dir = (Next - Prev).GetSafeNormal();
-
-				Incoming = Dir * (P - Prev).Length() / TangentScalingFactor;
-				Outgoing = Dir * (P - Next).Length() / TangentScalingFactor;
+				const FVector LastPoint = SplineComponent->GetLocationAtSplinePoint(PointsAmount - 2, ESplineCoordinateSpace::Local);
+				const FVector Direction = (CurrentPoint - LastPoint).GetSafeNormal();
+				Incoming = Direction * (CurrentPoint - LastPoint).Length() / TangentScalingFactor;
 			}
-
 			SplineComponent->SetTangentsAtSplinePoint(i, Incoming, Outgoing, ESplineCoordinateSpace::Local, false);
 		}
-
 		SplineComponent->UpdateSpline();
 		GenerateMeshes();
 	}
@@ -197,70 +196,133 @@ void AAedificSpline::GenerateMeshes()
 		EmptyMeshes();
 
 		StaticMesh->CalculateExtendedBounds();
-		
-		const float MeshLength = StaticMesh->GetBoundingBox().GetSize().X;
-		const float SplineLeght = SplineComponent->GetSplineLength();
-		const int32 LoopSize = FMath::CeilToInt(SplineLeght / MeshLength);
 
-		FVector StartLocation = FVector::ZeroVector;
-		FVector EndLocation = FVector::ZeroVector;
-		FVector StartTangent = FVector::ZeroVector;
-		FVector EndTangent = FVector::ZeroVector;
-		FVector UpVector = FVector::UpVector;
-		float StartDistance = 0.f;
-		float MidDistance = 0.f;
-		float EndDistance = 0.f;
+		// Precompute
+		const float MeshLength = StaticMesh ? StaticMesh->GetBoundingBox().GetSize().X : 0.f;
+		const float SplineLength = SplineComponent->GetSplineLength();
 
+		if (MeshLength <= KINDA_SMALL_NUMBER || SplineLength <= KINDA_SMALL_NUMBER)
+		{
+			// safe-guard
+			return;
+		}
+
+		// Start with the minimal number of meshes needed to cover the spline
+		int32 LoopSize = FMath::CeilToInt(SplineLength / MeshLength);
+		LoopSize = FMath::Max(1, LoopSize);
+
+		// Reduce LoopSize while constraints are violated (but never below 1):
+		//  - spacing >= MeshSizeTreshold * MeshLength
+		//  - overhang fraction <= MeshSizeTreshold
+		while (LoopSize > 1)
+		{
+			const float Spacing = SplineLength / (float)LoopSize;
+			const bool bSpacingTooSmall = Spacing < (MeshSizeTreshold * MeshLength);
+
+			// Overhang fraction if each mesh covers MeshLength but starts spaced by Spacing:
+			// last mesh end = (LoopSize - 1) * Spacing + MeshLength
+			// overhang = lastMeshEnd - SplineLength
+			// overhangFraction = overhang / MeshLength = 1 - (SplineLength / (LoopSize * MeshLength))
+			const float OverhangFraction = 1.0f - (SplineLength / ((float)LoopSize * MeshLength));
+			const bool bOverhangTooLarge = OverhangFraction > MeshSizeTreshold;
+
+			if (!bSpacingTooSmall && !bOverhangTooLarge)
+			{
+				break; // constraints satisfied
+			}
+
+			// otherwise reduce number of meshes (this increases spacing and reduces overhang)
+			LoopSize--;
+		}
+
+		// Final sanity clamp
+		LoopSize = FMath::Max(1, LoopSize);
+
+		// prepare container
 		SplineMeshComponents.Reset(LoopSize);
 
-		for (int32 i = 0; i < LoopSize; i++)
+		// spacing between mesh starts (equal spacing)
+		const float Spacing = SplineLength / (float)LoopSize;
+
+		for (int32 i = 0; i < LoopSize; ++i)
 		{
-			if (SplineLeght < MeshLength)
+			const float StartDistance = i * Spacing;
+			const float EndDistanceUnclamped = StartDistance + MeshLength;
+			const bool bIsOverhang = EndDistanceUnclamped > SplineLength;
+			const float EndDistanceClamped = bIsOverhang ? SplineLength : EndDistanceUnclamped;
+			const float OverhangAmount = bIsOverhang ? (EndDistanceUnclamped - SplineLength) : 0.f;
+
+			// Locations
+			const FVector StartLocation = SplineComponent->GetLocationAtDistanceAlongSpline(StartDistance, ESplineCoordinateSpace::Local);
+
+			FVector EndLocation;
+			if (!bIsOverhang)
 			{
-				StartDistance = 0.f;
-				EndDistance = SplineLeght;
+				EndLocation = SplineComponent->GetLocationAtDistanceAlongSpline(EndDistanceClamped, ESplineCoordinateSpace::Local);
 			}
 			else
 			{
-				StartDistance = i * MeshLength;
-				EndDistance = StartDistance + MeshLength;
+				// Extrapolate past the spline end along the final tangent for a natural overhang
+				const FVector SplineEndLocation = SplineComponent->GetLocationAtDistanceAlongSpline(SplineLength, ESplineCoordinateSpace::Local);
+				const FVector SplineEndTangent = SplineComponent->GetTangentAtDistanceAlongSpline(SplineLength, ESplineCoordinateSpace::Local).GetSafeNormal();
+				EndLocation = SplineEndLocation + SplineEndTangent * OverhangAmount;
 			}
 
-			if (EndDistance >= SplineLeght)
+			// Tangents (clamped to MeshLength similar to your original code)
+			const FVector StartTangent = SplineComponent->GetTangentAtDistanceAlongSpline(StartDistance, ESplineCoordinateSpace::Local).GetClampedToMaxSize(MeshLength);
+			FVector EndTangent;
+			if (!bIsOverhang)
 			{
-				EndDistance = SplineLeght;
+				EndTangent = SplineComponent->GetTangentAtDistanceAlongSpline(EndDistanceClamped, ESplineCoordinateSpace::Local).GetClampedToMaxSize(MeshLength);
+			}
+			else
+			{
+				// use final spline tangent for overhang tangent
+				const FVector SplineEndTangent = SplineComponent->GetTangentAtDistanceAlongSpline(SplineLength, ESplineCoordinateSpace::Local);
+				EndTangent = SplineEndTangent.GetClampedToMaxSize(MeshLength);
 			}
 
-			MidDistance = StartDistance + (EndDistance - StartDistance) / 2.f;
+			const FVector StartScale = SplineComponent->GetScaleAtDistanceAlongSpline(StartDistance);
+			const FVector EndScale = SplineComponent->GetScaleAtDistanceAlongSpline(EndDistanceClamped);
 
-			StartLocation = SplineComponent->GetLocationAtDistanceAlongSpline(StartDistance, ESplineCoordinateSpace::Local);
-			EndLocation = SplineComponent->GetLocationAtDistanceAlongSpline(EndDistance, ESplineCoordinateSpace::Local);
+			const float StartRoll = SplineComponent->GetRollAtDistanceAlongSpline(StartDistance, ESplineCoordinateSpace::Local);
+			const float EndRoll = SplineComponent->GetRollAtDistanceAlongSpline(EndDistanceClamped, ESplineCoordinateSpace::Local);
 
-			StartTangent = SplineComponent->GetTangentAtDistanceAlongSpline(StartDistance, ESplineCoordinateSpace::Local).GetClampedToMaxSize(MeshLength);
-			EndTangent = SplineComponent->GetTangentAtDistanceAlongSpline(EndDistance, ESplineCoordinateSpace::Local).GetClampedToMaxSize(MeshLength);
+			// Up vector sampling: use midpoint along the actual part of the mesh that lies on-spline
+			float MidSampleDistance = StartDistance + FMath::Min(MeshLength * 0.5f, EndDistanceClamped - StartDistance);
+			MidSampleDistance = FMath::Clamp(MidSampleDistance, 0.f, SplineLength);
 
+			FVector UpVector = FVector::UpVector;
 			if (bAbsoluteUpDirection)
 			{
-				UpVector = UpDirection;
+				UpVector = AbsoluteUpDirection;
 			}
 			else
 			{
-				UpVector = SplineComponent->GetUpVectorAtDistanceAlongSpline(MidDistance, ESplineCoordinateSpace::Local);
+				UpVector = SplineComponent->GetUpVectorAtDistanceAlongSpline(MidSampleDistance, ESplineCoordinateSpace::Local);
 			}
 
-			const FString SegmentName = "SplineMesh" + FString::SanitizeFloat(i);
+			// Create & configure spline mesh component (your original code with names preserved)
+			const FString SegmentName = FString::Printf(TEXT("SplineMesh%d"), i);
 			USplineMeshComponent* NewSplineMeshComponent = NewObject<USplineMeshComponent>(this, USplineMeshComponent::StaticClass(), *SegmentName, EObjectFlags::RF_Transactional);
 			NewSplineMeshComponent->CreationMethod = EComponentCreationMethod::UserConstructionScript;
-			NewSplineMeshComponent->RegisterComponent();
 			NewSplineMeshComponent->AttachToComponent(SplineComponent, FAttachmentTransformRules::FAttachmentTransformRules(EAttachmentRule::KeepRelative, true));
-			NewSplineMeshComponent->SetMobility(EComponentMobility::Static);
-			
-			NewSplineMeshComponent->SetComponentTickEnabled(false);
-			NewSplineMeshComponent->bSmoothInterpRollScale = bInterpRoll;
+			NewSplineMeshComponent->RegisterComponent();
 
-			NewSplineMeshComponent->SetForwardAxis(ESplineMeshAxis::X);
-			NewSplineMeshComponent->SetSplineUpDir(UpVector);
-			NewSplineMeshComponent->SetStartAndEnd(StartLocation, StartTangent, EndLocation, EndTangent, true);
+			NewSplineMeshComponent->SetMobility(EComponentMobility::Static);
+			NewSplineMeshComponent->SetComponentTickEnabled(false);
+			NewSplineMeshComponent->SetGenerateOverlapEvents(false);
+			NewSplineMeshComponent->bComputeFastLocalBounds = true;
+			NewSplineMeshComponent->bComputeBoundsOnceForGame = true;
+
+			NewSplineMeshComponent->SetForwardAxis(ESplineMeshAxis::X, false);
+			NewSplineMeshComponent->SetSplineUpDir(UpVector, false);
+			NewSplineMeshComponent->SetStartAndEnd(StartLocation, StartTangent, EndLocation, EndTangent, false);
+			NewSplineMeshComponent->SetStartRoll(StartRoll, false);
+			NewSplineMeshComponent->SetEndRoll(EndRoll, false);
+			NewSplineMeshComponent->SetStartScale(FVector2D(StartScale.Y, StartScale.Z), false);
+			NewSplineMeshComponent->SetEndScale(FVector2D(EndScale.Y, EndScale.Z), false);
+			NewSplineMeshComponent->UpdateMesh();
 
 			NewSplineMeshComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndProbe);
 
@@ -269,21 +331,27 @@ void AAedificSpline::GenerateMeshes()
 				NewSplineMeshComponent->SetStaticMesh(StaticMesh);
 			}
 
-			if (Material)
+			if (OverrideMaterial)
 			{
-				NewSplineMeshComponent->SetMaterial(0, Material);
+				NewSplineMeshComponent->SetMaterial(0, OverrideMaterial);
 			}
+
+			SplineMeshComponents.AddUnique(NewSplineMeshComponent);
 		}
 	}
 }
 
 void AAedificSpline::UpdateMaterials()
 {
-	if (Material)
+	for (USplineMeshComponent* spline : SplineMeshComponents)
 	{
-		for (USplineMeshComponent* spline : SplineMeshComponents)
+		if (OverrideMaterial)
 		{
-			spline->SetMaterial(0, Material);
+			spline->SetMaterial(0, OverrideMaterial);
+		}
+		else if (StaticMesh)
+		{
+			spline->SetMaterial(0, StaticMesh->GetMaterial(0));
 		}
 	}
 }

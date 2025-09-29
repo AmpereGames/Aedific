@@ -10,9 +10,9 @@ class USplineComponent;
 class USplineMeshComponent;
 
 /**
- * Actor class to created spline based meshes.
+ * Use this to create continuous spline based meshes.
  */
-UCLASS(ClassGroup = Aedific, HideCategories = (Actor, Collision, DataLayers, Input, LOD, HLOD, Networking, Physics, WorldPartition), MinimalAPI, NotBlueprintable)
+UCLASS(ClassGroup = Aedific, HideCategories = (Actor, Collision, DataLayers, Input, LOD, HLOD, Networking, Physics, RayTracing, WorldPartition), MinimalAPI, NotBlueprintable)
 class AAedificSpline : public AActor
 {
 	GENERATED_BODY()
@@ -22,36 +22,38 @@ public:
 	AAedificSpline();
 
 protected:
-	/** Scene component. */
-	UPROPERTY()
+	/** The Actor's root. */
 	TObjectPtr<USceneComponent> SceneComponent;
 
-	/** Spline component. */
-	UPROPERTY(EditInstanceOnly, Category = Aedific)
+	/** For user in-editor manipulation of Spline points. */
+	UPROPERTY(VisibleInstanceOnly, Category = Aedific)
 	TObjectPtr<USplineComponent> SplineComponent;
 
-	/** Mesh. */
+	/** Asset that will be used to build the spline. */
 	UPROPERTY(EditInstanceOnly, Category = Aedific)
 	TObjectPtr<UStaticMesh> StaticMesh;
 
-	/** Material. */
+	/** Override material of the Static Mesh asset. */
 	UPROPERTY(EditInstanceOnly, Category = Aedific)
-	TObjectPtr<UMaterialInterface> Material;
+	TObjectPtr<UMaterialInterface> OverrideMaterial;
 
-	/**  */
-	UPROPERTY(EditInstanceOnly, Category = Aedific)
-	uint8 bInterpRoll : 1;
-
-	/**  */
+	/** Wheter to use an absolute normal vector for each mesh instead of the auto computed ones. */
 	UPROPERTY(EditInstanceOnly, Category = Aedific, Meta = (InlineEditConditionToggle))
 	uint8 bAbsoluteUpDirection : 1;
 
-	/**  */
-	UPROPERTY(EditInstanceOnly, Category = Aedific, Meta = (EditCondition = "bAbsoluteUpDirection"))
-	FVector UpDirection;
+	/** Fixed direction for each mesh up vector instead of the auto computed one. */
+	UPROPERTY(EditInstanceOnly, Category = Aedific, Meta = (EditCondition = "bAbsoluteUpDirection", ClampMin = 0.f, ClampMax = 1.f, UIMin = 0.f, UIMax = 1.f))
+	FVector AbsoluteUpDirection;
 
-	/**  */
-	UPROPERTY(EditInstanceOnly, Category = Aedific)
+	/**
+	 * Allows up to this percentage of the StaticMesh size to hang past spline end
+	 * and do not accept spacing smaller than this percentage of the StaticMesh size.
+	 */
+	UPROPERTY(EditInstanceOnly, Category = Aedific, Meta = (ClampMin = 0.f, ClampMax = 1.f, UIMin = 0.f, UIMax = 1.f))
+	float MeshSizeTreshold;
+
+	/** Factor to scale each tangent for smoothing. */
+	UPROPERTY(EditInstanceOnly, Category = Aedific, Meta = (ClampMin = 0.f, ClampMax = 10.f, UIMin = 0.f, UIMax = 10.f))
 	float TangentScalingFactor;
 
 	//~ Begin of UObject implementation.
@@ -64,24 +66,24 @@ protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 	//~ End of AActor implementation.
 
-	/**  */
+	/** Clear meshes if any, and generate them again. */
 	void GenerateMeshes();
 
-	/**  */
+	/** Assing the override material to the generated meshes. */
 	void UpdateMaterials();
 
-	/**  */
+	/** Clear the generated meshes. */
 	void EmptyMeshes();
 
-	/**  */
+	/** Clear the generated meshes and regenerate them. */
 	UFUNCTION(CallInEditor, Category = Aedific)
 	void Rebuild();
 
-	/**  */
+	/** Resets the spline and leave as the default two-point one. */
 	UFUNCTION(CallInEditor, Category = Aedific)
 	void Reset();
 
-	/**  */
+	/** Auto-compute the tangets and assign them to the spline component. */
 	UFUNCTION(CallInEditor, Category = Aedific)
 	void CalculateTangents();
 
@@ -91,13 +93,10 @@ private:
 	TObjectPtr<UBillboardComponent> EditorSprite;
 #endif // WITH_EDITORONLY_DATA
 
-	/**  */
+	/** Container for the generated meshes. */
 	UPROPERTY()
 	TArray<TObjectPtr<USplineMeshComponent>> SplineMeshComponents;
 
-	/** Mesh. */
+	/** Default StaticMesh when none is assigned. */
 	TObjectPtr<UStaticMesh> DefaultStaticMesh;
-
-	/** Material. */
-	TObjectPtr<UMaterialInterface> DefaultMaterial;
 };
