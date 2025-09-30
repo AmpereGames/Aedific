@@ -50,17 +50,13 @@ protected:
 	TObjectPtr<USplineComponent> SplineComponent;
 
 	/** Asset that will be used to build the spline. */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Mesh")
+	UPROPERTY(EditInstanceOnly, Category = "Aedific")
 	TObjectPtr<UStaticMesh> StaticMesh;
 
 	/** Override material of the Static Mesh asset. */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Mesh")
+	UPROPERTY(EditInstanceOnly, Category = "Aedific")
 	TObjectPtr<UMaterialInterface> MaterialOverride;
 
-	/** .  */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Mesh")
-	uint8 bAutoRebuildMesh : 1;
-	
 	/**
 	 * Linear tangent scale factor.
 	 * 0.0 = Constant, 1.0 = Smooth.
@@ -83,6 +79,10 @@ protected:
 	/** . */
 	UPROPERTY(EditInstanceOnly, Category = "Aedific|Tangents")
 	uint8 bComputeManualRoll : 1;
+
+	/** .  */
+	UPROPERTY(EditInstanceOnly, Category = "Aedific|Mesh")
+	uint8 bAutoRebuildMesh : 1;
 
 #if WITH_EDITORONLY_DATA
 	/** Scale of the drawn UpVector arrows. */

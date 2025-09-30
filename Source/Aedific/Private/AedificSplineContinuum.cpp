@@ -108,7 +108,7 @@ void AAedificSplineContinuum::OnConstruction(const FTransform& Transform)
 
 	if (bAutoRebuildMesh)
 	{
-
+		RebuildMesh();
 	}
 }
 
