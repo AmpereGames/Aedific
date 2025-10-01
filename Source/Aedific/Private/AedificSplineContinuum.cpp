@@ -145,9 +145,6 @@ void AAedificSplineContinuum::ComputeSpline()
 
 void AAedificSplineContinuum::ComputeTangents(const int32 SplinePointsNum, const bool bClosed)
 {
-	if (SplinePointsNum < 2)
-		return;
-
 	// Cache all point locations to avoid redundant lookups.
 	TArray<FVector> PointLocations;
 	PointLocations.Reserve(SplinePointsNum);
@@ -280,11 +277,6 @@ static float GetRelativeRoll(USplineComponent* Component, const FRotator& Rotati
 
 void AAedificSplineContinuum::GenerateMesh(const float MeshLength, const float SplineLength, const int32 LoopSize)
 {
-	if (MeshLength <= KINDA_SMALL_NUMBER || SplineLength <= KINDA_SMALL_NUMBER)
-	{
-		return;
-	}
-
 	// Prepare container.
 	SplineMeshComponents.Reserve(LoopSize);
 
