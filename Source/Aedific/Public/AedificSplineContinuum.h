@@ -29,6 +29,8 @@ public:
 	AAedificSplineContinuum();
 
 	//~ Begin of UObject implementation.
+	virtual void BeginDestroy() override;
+	virtual bool CanBeInCluster() const override { return true; }
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif // WITH_EDITOR

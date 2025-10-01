@@ -101,6 +101,13 @@ void AAedificSplineContinuum::PostEditChangeProperty(FPropertyChangedEvent& Prop
 }
 #endif // WITH_EDITOR
 
+void AAedificSplineContinuum::BeginDestroy()
+{
+	EmptyMesh();
+
+	Super::BeginDestroy();
+}
+
 void AAedificSplineContinuum::OnConstruction(const FTransform& Transform)
 {
 	if (bAutoComputeSpline)
@@ -220,12 +227,7 @@ void AAedificSplineContinuum::ComputeUpVectors(const int32 SplinePointsNum)
 void AAedificSplineContinuum::RebuildMesh()
 {
 	UWorld* World = GetWorld();
-	if (!World || !World->IsInitialized() || !SplineComponent)
-	{
-		return;
-	}
-
-	if (!StaticMesh || bRebuildRequested)
+	if (!World || !World->IsInitialized() || !SplineComponent || !StaticMesh || bRebuildRequested)
 	{
 		return;
 	}
@@ -234,6 +236,7 @@ void AAedificSplineContinuum::RebuildMesh()
 
 	EmptyMesh();
 
+	// Avoid cleaning and re-generating the meshes on the same frame.
 	World->GetTimerManager().SetTimerForNextTick([this]()
 	{
 		// Mesh and spline dimensions.
@@ -248,8 +251,7 @@ void AAedificSplineContinuum::RebuildMesh()
 		}
 
 		// Minimal number of meshes needed to cover the spline.
-		int32 LoopSize = FMath::CeilToInt(SplineLength / MeshLength);
-		LoopSize = FMath::Max(1, LoopSize);
+		const int32 LoopSize = FMath::Max(1, FMath::CeilToInt(SplineLength / MeshLength));
 
 		if (bUseParallelTransport)
 		{
@@ -302,6 +304,7 @@ void AAedificSplineContinuum::GenerateMesh(const float MeshLength, const float S
 		const float StartRollDegrees = GetRelativeRoll(SplineComponent, SplineComponent->GetRotationAtDistanceAlongSpline(MidPointDistance, ESplineCoordinateSpace::Local), CurrentDistance);
 		const float EndRollDegrees = GetRelativeRoll(SplineComponent, SplineComponent->GetRotationAtDistanceAlongSpline(MidPointDistance, ESplineCoordinateSpace::Local), NextDistance);
 
+		// @TODO: Implement proper scaling?
 		const FVector SplineStartScale = SplineComponent->GetScaleAtDistanceAlongSpline(CurrentDistance);
 		const FVector2D StartScale = FVector2D(SplineStartScale.Y, SplineStartScale.Z);
 		const FVector SplineEndScale = SplineComponent->GetScaleAtDistanceAlongSpline(NextDistance);
@@ -363,7 +366,7 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 		Tangents[k] = SplineComponent->GetTangentAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::Local).GetSafeNormal();
 	}
 
-	// 2) Build normals using Parallel Transport to create smooth, twist-free orientation frames.
+	// Build normals using Parallel Transport to create smooth, twist-free orientation frames.
 	TArray<FVector> Normals; Normals.SetNumUninitialized(NumFrames);
 	FVector InitialUp = FVector::UpVector; // Define an initial "up" direction.
 
@@ -385,7 +388,7 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 		Normals[k] = (Normals[k] - CurrentTangent * FVector::DotProduct(Normals[k], CurrentTangent)).GetSafeNormal();
 	}
 
-	// 3) If the spline is a closed loop, distribute the accumulated rotational error.
+	// If the spline is a closed loop, distribute the accumulated rotational error.
 	if (SplineComponent->IsClosedLoop())
 	{
 		// The start and end tangents are identical, but floating point errors can cause the normals to drift.
@@ -431,22 +434,22 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 		// A good default is the distance between the points.
 		const float TangentMagnitude = (Positions[EndIndex] - Positions[StartIndex]).Size();
 
+		// Calculate the roll needed at the start and end of the segment.
+		// @TODO: Combine with user inputed Spline rotation?
 		const float StartRoll = CalculateRollInDegrees(StartTangentVec, StartNormalVec, ReferenceUp);
 		const float EndRoll = CalculateRollInDegrees(EndTangentVec, EndNormalVec, ReferenceUp);
 
 		FAedificMeshSegment Segment;
-		Segment.SegmentName		= FString::Printf(TEXT("SplineMesh%d"), i);
-		Segment.UpVector		= ReferenceUp; // For SetSplineUpDir()
+		Segment.SegmentName			= FString::Printf(TEXT("SplineMesh%d"), i);
+		Segment.UpVector			= ReferenceUp; // For SetSplineUpDir()
+		Segment.StartLocation		= Positions[StartIndex];
+		Segment.StartTangent		= StartTangentVec * TangentMagnitude;
+		Segment.EndLocation			= Positions[EndIndex];
+		Segment.EndTangent			= EndTangentVec * TangentMagnitude;
+		Segment.StartRollDegrees	= StartRoll;
+		Segment.EndRollDegrees		= EndRoll;
 
-		Segment.StartLocation	= Positions[StartIndex];
-		Segment.StartTangent	= StartTangentVec * TangentMagnitude;
-		Segment.EndLocation		= Positions[EndIndex];
-		Segment.EndTangent		= EndTangentVec * TangentMagnitude;
-
-		// Calculate the roll needed at the start and end of the segment.
-		Segment.StartRollDegrees = StartRoll;
-		Segment.EndRollDegrees = EndRoll;
-
+		// @TODO: Implement proper scaling?
 		Segment.StartScale	= FVector2D::UnitVector;
 		Segment.EndScale	= FVector2D::UnitVector;
 
@@ -504,7 +507,6 @@ void AAedificSplineContinuum::EmptyMesh()
 		}
 
 		SplineMeshComponents.Reset();
-		MarkComponentsRenderStateDirty();
 	}
 }
 
