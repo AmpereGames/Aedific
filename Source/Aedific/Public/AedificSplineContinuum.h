@@ -2,15 +2,13 @@
 
 #pragma once
 
-#include "AedificTypes.h"
-
 #include <GameFramework/Actor.h>
 
 #include "AedificSplineContinuum.generated.h"
 
 class USplineComponent;
 class USplineMeshComponent;
-enum class EAedificTangentsComputeMethod : uint8;
+struct FAedificMeshSegment;
 
 /**
  * A spline-based construction tool designed for continuous distribution of meshes along
@@ -40,13 +38,19 @@ public:
 	virtual void OnConstruction(const FTransform& Transform) override;
 	//~ End of AActor implementation.
 
+	/** Override manual spline values with computed ones. */
+	void ComputeSpline();
+
+	/**  */
+	void RebuildMesh();
+
 protected:
 
 	/** The Actor's root component. */
 	TObjectPtr<USceneComponent> SceneComponent;
 
 	/** For user in-editor manipulation of Spline points. */
-	UPROPERTY(VisibleInstanceOnly, Category = "Aedific")
+	UPROPERTY(VisibleInstanceOnly, Category = "Aedific|Spline")
 	TObjectPtr<USplineComponent> SplineComponent;
 
 	/** Asset that will be used to build the spline. */
@@ -57,62 +61,53 @@ protected:
 	UPROPERTY(EditInstanceOnly, Category = "Aedific")
 	TObjectPtr<UMaterialInterface> MaterialOverride;
 
+	/** If true, the Spline's properies (tangents, up-vectors and rotations) will automatically be computed.  */
+	UPROPERTY(EditInstanceOnly, Category = "Aedific|Spline")
+	uint8 bAutoComputeSpline : 1;
+
+	/** . */
+	UPROPERTY(EditInstanceOnly, Category = "Aedific|Spline", Meta = (EditCondition = bAutoComputeSpline))
+	uint8 bComputeTangents : 1;
+
 	/**
 	 * Linear tangent scale factor.
 	 * 0.0 = Constant, 1.0 = Smooth.
 	 */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Tangents", Meta = (ClampMin = 0.f, ClampMax = 1.f, UIMin = 0.f, UIMax = 1.f, Delta = 0.01f))
-	float LinearScaleFactor;
-
-	/** If true, the Spline values will be computed and overriden.  */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Tangents")
-	uint8 bAutoComputeSpline : 1;
+	UPROPERTY(EditInstanceOnly, Category = "Aedific|Spline", Meta = (ClampMin = 0.f, ClampMax = 1.f, UIMin = 0.f, UIMax = 1.f, Delta = 0.01f, EditCondition = "bAutoComputeSpline && bComputeTangents"))
+	float TangentsScale;
 
 	/** . */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Tangents")
-	uint8 bComputeTangents : 1;
-
-	/** . */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Tangents")
-	uint8 bComputeParallelTransport : 1;
-
-	/** . */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Tangents")
-	uint8 bComputeManualRoll : 1;
+	UPROPERTY(EditInstanceOnly, Category = "Aedific|Spline", Meta = (EditCondition = "bAutoComputeSpline && !bUseParallelTransport"))
+	uint8 bComputeUpVectors : 1;
 
 	/** .  */
 	UPROPERTY(EditInstanceOnly, Category = "Aedific|Mesh")
 	uint8 bAutoRebuildMesh : 1;
 
-#if WITH_EDITORONLY_DATA
-	/** Scale of the drawn UpVector arrows. */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Debug", Meta = (ForceUnits = "cm"))
-	float DebugUpVectorScale;
+	/** . */
+	UPROPERTY(EditInstanceOnly, Category = "Aedific|Mesh", Meta = (EditCondition = bAutoRebuildMesh))
+	uint8 bUseParallelTransport : 1;
 
-	/** Size of the drawn UpVector arrows. */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Debug", Meta = (ForceUnits = "cm"))
-	float DebugUpVectorSize;
+	/** Tangent computation function. */
+	void ComputeTangents(const int32 SplinePointsNum, const bool bClosed);
 
-	/** Thickness of the drawn UpVector arrows. */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Debug", Meta = (ForceUnits = "cm"))
-	float DebugUpVectorThickness;
+	/**  */
+	void ComputeUpVectors(const int32 SplinePointsNum);
 
-	/** For how long the UpVector arrows will be drawn for. */
-	UPROPERTY(EditInstanceOnly, Category = "Aedific|Debug", Meta = (ForceUnits = "seconds"))
-	float DebugUpVectorDuration;
+	/**  */
+	void GenerateMesh(const float MeshLength, const float SplineLength, const int32 LoopSize);
 
-	/** Debug function to visualize up vectors at each spline point. */
-	UFUNCTION(CallInEditor, Category = "Aedific")
-	void DrawDebugUpVectors();
-#endif // WITH_EDITORONLY_DATA
+	/**  Applies Frenet-like parallel transport frame builder to ensure smooth rotation along loops. */
+	void GenerateMeshParallelTransport(const float MeshLength, const float SplineLength, const int32 LoopSize);
 
-	/** Override manual spline values with computed ones. */
-	UFUNCTION(CallInEditor, Category = "Aedific")
-	void RebuildMesh();
+	/**  */
+	void CreateSegment(const FAedificMeshSegment& Segment);
 
-	/** Override manual spline values with computed ones. */
-	UFUNCTION(CallInEditor, Category = "Aedific")
-	void ComputeSpline();
+	/**  */
+	void EmptyMesh();
+
+	/**  */
+	void UpdateMaterial();
 
 private:
 
@@ -121,12 +116,10 @@ private:
 	TObjectPtr<UBillboardComponent> EditorSprite;
 #endif // WITH_EDITORONLY_DATA
 
-	/** Tangent computation function. */
-	void ComputeSplineTangents(const int32 SplinePointsNum, const bool bClosed);
+	/** .  */
+	uint8 bRebuildRequested : 1;
 
-	/** Applies parallel transport to ensure smooth rotation along closed loops. */
-	void ComputeParallelTransport(const int32 SplinePointsNum);
-	
-	/** Applies manual roll adjustments at each spline point. */
-	void ComputeManualRoll(const int32 SplinePointsNum);
+	/** Container for the generated meshes. */
+	UPROPERTY()
+	TArray<TObjectPtr<USplineMeshComponent>> SplineMeshComponents;
 };
