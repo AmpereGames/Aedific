@@ -37,8 +37,6 @@ AAedificSplineContinuum::AAedificSplineContinuum()
 	RootComponent = SceneComponent;
 	SceneComponent->SetMobility(EComponentMobility::Static);
 	SceneComponent->SetComponentTickEnabled(false);
-	SceneComponent->bComputeFastLocalBounds = true;
-	SceneComponent->bComputeBoundsOnceForGame = true;
 
 	// Create spline component.
 	SplineComponent = CreateDefaultSubobject<USplineComponent>(TEXT("SplineComponent"));
@@ -47,8 +45,6 @@ AAedificSplineContinuum::AAedificSplineContinuum()
 	SplineComponent->SetComponentTickEnabled(false);
 	SplineComponent->SetGenerateOverlapEvents(false);
 	SplineComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	SplineComponent->bComputeFastLocalBounds = true;
-	SplineComponent->bComputeBoundsOnceForGame = true;
 
 	// Fetch default mesh file.
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> floorMeshFile(TEXT("/Aedific/Meshes/SM_Floor_Decimated.SM_Floor_Decimated"));
@@ -152,7 +148,7 @@ void AAedificSplineContinuum::ComputeTangents(const int32 SplinePointsNum, const
 	if (SplinePointsNum < 2)
 		return;
 
-	// --- Step 1: Cache all point locations to avoid redundant lookups. ---
+	// Cache all point locations to avoid redundant lookups.
 	TArray<FVector> PointLocations;
 	PointLocations.Reserve(SplinePointsNum);
 	for (int32 i = 0; i < SplinePointsNum; ++i)
@@ -160,13 +156,13 @@ void AAedificSplineContinuum::ComputeTangents(const int32 SplinePointsNum, const
 		PointLocations.Add(SplineComponent->GetLocationAtSplinePoint(i, ESplineCoordinateSpace::Local));
 	}
 
-	// --- Step 2: Iterate through cached points to compute tangents. ---
+	// Iterate through cached points to compute tangents.
 	for (int32 i = 0; i < SplinePointsNum; ++i)
 	{
 		const FVector& CurrentPoint = PointLocations[i];
 		FVector PreviousPoint, NextPoint;
 
-		// --- Determine neighboring points based on loop type and position. ---
+		// Determine neighboring points based on loop type and position.
 		if (bClosed)
 		{
 			PreviousPoint = PointLocations[(i == 0) ? SplinePointsNum - 1 : i - 1];
@@ -181,10 +177,10 @@ void AAedificSplineContinuum::ComputeTangents(const int32 SplinePointsNum, const
 		FVector Incoming = FVector::ZeroVector;
 		FVector Outgoing = FVector::ZeroVector;
 
-		// --- Calculate tangent vectors. ---
+		// Calculate tangent vectors.
 		if ((i > 0 && i < SplinePointsNum - 1) || bClosed)
 		{
-			// Interior point or closed spline → unified direction (Catmull-Rom style)
+			// Interior point or closed spline become unified direction (Catmull-Rom style).
 			const FVector UnifiedDir = (NextPoint - PreviousPoint).GetSafeNormal();
 
 			Incoming = UnifiedDir * (CurrentPoint - PreviousPoint).Size() * TangentsScale;
@@ -192,7 +188,7 @@ void AAedificSplineContinuum::ComputeTangents(const int32 SplinePointsNum, const
 		}
 		else
 		{
-			// Endpoints of an open spline → one-sided tangents
+			// Endpoints of an open spline become one-sided tangents.
 			if (i > 0)
 			{
 				const FVector IncomingDir = (CurrentPoint - PreviousPoint).GetSafeNormal();
@@ -213,19 +209,25 @@ void AAedificSplineContinuum::ComputeUpVectors(const int32 SplinePointsNum)
 {
 	for (int32 i = 0; i < SplinePointsNum; ++i)
 	{
-		// 1. Get the roll value you set in the editor (in degrees).
+		// Get the roll value you set in the editor (in degrees).
 		const FQuat Rotation = SplineComponent->GetRotationAtSplinePoint(i, ESplineCoordinateSpace::World).Quaternion();
 
-		// 5. Apply the roll to the existing up vector.
+		// Apply the roll to the existing up vector.
 		const FVector NewUp = Rotation.GetAxisZ();
 
-		// 6. Set the final up vector.
+		// Set the final up vector.
 		SplineComponent->SetUpVectorAtSplinePoint(i, NewUp, ESplineCoordinateSpace::World, false);
 	}
 }
 
 void AAedificSplineContinuum::RebuildMesh()
 {
+	UWorld* World = GetWorld();
+	if (!World || !World->IsInitialized() || !SplineComponent)
+	{
+		return;
+	}
+
 	if (!StaticMesh || bRebuildRequested)
 	{
 		return;
@@ -235,7 +237,7 @@ void AAedificSplineContinuum::RebuildMesh()
 
 	EmptyMesh();
 
-	GetWorld()->GetTimerManager().SetTimerForNextTick([this]()
+	World->GetTimerManager().SetTimerForNextTick([this]()
 	{
 		// Mesh and spline dimensions.
 		StaticMesh->CalculateExtendedBounds();
@@ -283,7 +285,7 @@ void AAedificSplineContinuum::GenerateMesh(const float MeshLength, const float S
 		return;
 	}
 
-	// Prepare container
+	// Prepare container.
 	SplineMeshComponents.Reserve(LoopSize);
 
 	for (int32 i = 0; i < LoopSize; i++)
@@ -331,20 +333,20 @@ void AAedificSplineContinuum::GenerateMesh(const float MeshLength, const float S
 
 static float CalculateRollInDegrees (const FVector& Tangent, const FVector& Normal, const FVector& ReferenceUpVector)
 {
-	// 1. Project the ReferenceUpVector onto the plane perpendicular to the tangent.
+	// Project the ReferenceUpVector onto the plane perpendicular to the tangent.
 	// This gives us the spline mesh's default, non-rolled "up" direction.
 	const FVector DefaultUp = (ReferenceUpVector - Tangent * FVector::DotProduct(ReferenceUpVector, Tangent)).GetSafeNormal();
 
-	// 2. Create an orthonormal basis on that plane with a "right" vector (binormal).
+	// Create an orthonormal basis on that plane with a "right" vector (binormal).
 	const FVector Binormal = FVector::CrossProduct(Tangent, DefaultUp);
 
-	// 3. Calculate the angle between the DefaultUp and our desired Normal on that plane.
+	// Calculate the angle between the DefaultUp and our desired Normal on that plane.
 	// We get the cosine of the angle from the dot product.
 	const float CosAngle = FVector::DotProduct(DefaultUp, Normal);
 	// We get the sine of the angle by projecting the Normal onto the Binormal.
 	const float SinAngle = FVector::DotProduct(Binormal, Normal);
 
-	// 4. Use Atan2 to find the angle in radians and convert to degrees.
+	// Use Atan2 to find the angle in radians and convert to degrees.
 	return -FMath::RadiansToDegrees(FMath::Atan2(SinAngle, CosAngle));
 };
 
@@ -356,7 +358,7 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 	// Calculate the distance between each frame along the spline.
 	const float Spacing = SplineLength / (float)LoopSize;
 
-	// 1) Sample positions and tangents at evenly spaced distances along the spline.
+	// Sample positions and tangents at evenly spaced distances along the spline.
 	// These will form the "spine" for our generated meshes.
 	TArray<FVector> Positions; Positions.SetNumUninitialized(NumFrames);
 	TArray<FVector> Tangents;  Tangents.SetNumUninitialized(NumFrames);
@@ -415,7 +417,7 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 		}
 	}
 
-	// 4) Spawn SplineMeshComponents using the generated frames.
+	// Spawn SplineMeshComponents using the generated frames.
 	// Each segment 'i' uses frame 'i' for its start and frame 'i+1' for its end.
 	SplineMeshComponents.Reset(LoopSize);
 
