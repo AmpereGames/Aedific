@@ -110,6 +110,8 @@ void AAedificSplineContinuum::BeginDestroy()
 
 void AAedificSplineContinuum::OnConstruction(const FTransform& Transform)
 {
+	//@TODO: Manually set Garbage Collection Cluster.
+
 	if (bAutoComputeSpline)
 	{
 		ComputeSpline();
@@ -227,7 +229,7 @@ void AAedificSplineContinuum::ComputeUpVectors(const int32 SplinePointsNum)
 void AAedificSplineContinuum::RebuildMesh()
 {
 	UWorld* World = GetWorld();
-	if (!World || !World->IsInitialized() || !SplineComponent || !StaticMesh || bRebuildRequested)
+	if (!World->IsValidLowLevel() || !World->IsInitialized() || !SplineComponent->IsValidLowLevel() || !StaticMesh->IsValidLowLevel() || bRebuildRequested)
 	{
 		return;
 	}
@@ -237,8 +239,14 @@ void AAedificSplineContinuum::RebuildMesh()
 	EmptyMesh();
 
 	// Avoid cleaning and re-generating the meshes on the same frame.
-	World->GetTimerManager().SetTimerForNextTick([this]()
+	World->GetTimerManager().SetTimerForNextTick([this, World]()
 	{
+		if (!World->IsValidLowLevel() || !SplineComponent->IsValidLowLevel() || !StaticMesh->IsValidLowLevel())
+		{
+			bRebuildRequested = false;
+			return;
+		}
+
 		// Mesh and spline dimensions.
 		StaticMesh->CalculateExtendedBounds();
 
@@ -247,6 +255,7 @@ void AAedificSplineContinuum::RebuildMesh()
 
 		if (MeshLength <= KINDA_SMALL_NUMBER || SplineLength <= KINDA_SMALL_NUMBER)
 		{
+			bRebuildRequested = false;
 			return;
 		}
 
@@ -304,7 +313,7 @@ void AAedificSplineContinuum::GenerateMesh(const float MeshLength, const float S
 		const float StartRollDegrees = GetRelativeRoll(SplineComponent, SplineComponent->GetRotationAtDistanceAlongSpline(MidPointDistance, ESplineCoordinateSpace::Local), CurrentDistance);
 		const float EndRollDegrees = GetRelativeRoll(SplineComponent, SplineComponent->GetRotationAtDistanceAlongSpline(MidPointDistance, ESplineCoordinateSpace::Local), NextDistance);
 
-		// @TODO: Implement proper scaling?
+		// @TODO: Implement proper scaling.
 		const FVector SplineStartScale = SplineComponent->GetScaleAtDistanceAlongSpline(CurrentDistance);
 		const FVector2D StartScale = FVector2D(SplineStartScale.Y, SplineStartScale.Z);
 		const FVector SplineEndScale = SplineComponent->GetScaleAtDistanceAlongSpline(NextDistance);
@@ -338,6 +347,7 @@ static float CalculateRollInDegrees (const FVector& Tangent, const FVector& Norm
 	// Calculate the angle between the DefaultUp and our desired Normal on that plane.
 	// We get the cosine of the angle from the dot product.
 	const float CosAngle = FVector::DotProduct(DefaultUp, Normal);
+
 	// We get the sine of the angle by projecting the Normal onto the Binormal.
 	const float SinAngle = FVector::DotProduct(Binormal, Normal);
 
@@ -434,8 +444,8 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 		// A good default is the distance between the points.
 		const float TangentMagnitude = (Positions[EndIndex] - Positions[StartIndex]).Size();
 
+		// @TODO: Combine with user inputed Spline rotation.
 		// Calculate the roll needed at the start and end of the segment.
-		// @TODO: Combine with user inputed Spline rotation?
 		const float StartRoll = CalculateRollInDegrees(StartTangentVec, StartNormalVec, ReferenceUp);
 		const float EndRoll = CalculateRollInDegrees(EndTangentVec, EndNormalVec, ReferenceUp);
 
@@ -449,7 +459,7 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 		Segment.StartRollDegrees	= StartRoll;
 		Segment.EndRollDegrees		= EndRoll;
 
-		// @TODO: Implement proper scaling?
+		// @TODO: Implement proper scaling.
 		Segment.StartScale	= FVector2D::UnitVector;
 		Segment.EndScale	= FVector2D::UnitVector;
 
@@ -460,38 +470,39 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 void AAedificSplineContinuum::CreateSegment(const FAedificMeshSegment& Segment)
 {
 	// Create & configure spline mesh component.
-	USplineMeshComponent* NewSplineMeshComponent = NewObject<USplineMeshComponent>(this, USplineMeshComponent::StaticClass(),
+	USplineMeshComponent* NewMeshSegment = NewObject<USplineMeshComponent>(this, USplineMeshComponent::StaticClass(),
 		*Segment.SegmentName, EObjectFlags::RF_Transactional);
-	NewSplineMeshComponent->CreationMethod = EComponentCreationMethod::UserConstructionScript;
-	NewSplineMeshComponent->RegisterComponent();
-	NewSplineMeshComponent->AttachToComponent(RootComponent, FAttachmentTransformRules::FAttachmentTransformRules(EAttachmentRule::KeepRelative, true));
+	NewMeshSegment->CreationMethod = EComponentCreationMethod::UserConstructionScript;
+	NewMeshSegment->RegisterComponent();
+	NewMeshSegment->AttachToComponent(RootComponent, FAttachmentTransformRules::FAttachmentTransformRules(EAttachmentRule::KeepRelative, true));
 
-	NewSplineMeshComponent->SetMobility(EComponentMobility::Static);
-	NewSplineMeshComponent->SetComponentTickEnabled(false);
-	NewSplineMeshComponent->SetGenerateOverlapEvents(false);
-	NewSplineMeshComponent->bComputeFastLocalBounds = true;
-	NewSplineMeshComponent->bComputeBoundsOnceForGame = true;
+	NewMeshSegment->SetMobility(EComponentMobility::Static);
+	NewMeshSegment->SetComponentTickEnabled(false);
+	NewMeshSegment->SetGenerateOverlapEvents(false);
+	NewMeshSegment->bComputeFastLocalBounds = true;
+	NewMeshSegment->bComputeBoundsOnceForGame = true;
+	NewMeshSegment->SetCollisionEnabled(ECollisionEnabled::QueryAndProbe);
 
 	if (StaticMesh)
 	{
-		NewSplineMeshComponent->SetStaticMesh(StaticMesh);
+		NewMeshSegment->SetStaticMesh(StaticMesh);
 	}
 
-	NewSplineMeshComponent->SetStartAndEnd(Segment.StartLocation, Segment.StartTangent, Segment.EndLocation, Segment.EndTangent, false);
-	NewSplineMeshComponent->SetSplineUpDir(Segment.UpVector, false);
-	NewSplineMeshComponent->SetStartRollDegrees(Segment.StartRollDegrees, false);
-	NewSplineMeshComponent->SetEndRollDegrees(Segment.EndRollDegrees, false);
-	NewSplineMeshComponent->SetStartScale(Segment.StartScale, false);
-	NewSplineMeshComponent->SetEndScale(Segment.EndScale, false);
+	NewMeshSegment->SetStartAndEnd(Segment.StartLocation, Segment.StartTangent, Segment.EndLocation, Segment.EndTangent, false);
+	NewMeshSegment->SetSplineUpDir(Segment.UpVector, false);
+	NewMeshSegment->SetStartRollDegrees(Segment.StartRollDegrees, false);
+	NewMeshSegment->SetEndRollDegrees(Segment.EndRollDegrees, false);
+	NewMeshSegment->SetStartScale(Segment.StartScale, false);
+	NewMeshSegment->SetEndScale(Segment.EndScale, false);
 
 	if (MaterialOverride)
 	{
-		NewSplineMeshComponent->SetMaterial(0, MaterialOverride);
+		NewMeshSegment->SetMaterial(0, MaterialOverride);
 	}
 
-	NewSplineMeshComponent->UpdateMesh();
+	NewMeshSegment->UpdateMesh();
 
-	SplineMeshComponents.AddUnique(NewSplineMeshComponent);
+	SplineMeshComponents.AddUnique(NewMeshSegment);
 }
 
 void AAedificSplineContinuum::EmptyMesh()
@@ -507,6 +518,8 @@ void AAedificSplineContinuum::EmptyMesh()
 		}
 
 		SplineMeshComponents.Reset();
+
+		// @TODO: Bake spline mesh segments into one single static mesh to reduce draw-calls.
 	}
 }
 
