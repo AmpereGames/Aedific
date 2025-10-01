@@ -330,208 +330,104 @@ void AAedificSplineContinuum::GenerateMesh(const float MeshLength, const float S
 	}
 }
 
-static FVector OrthoNormalFromUp(const FVector& Tangent, const FVector& Up)
-{
-	// Remove tangent component from Up then normalize
-	const float Dot = FVector::DotProduct(Up, Tangent);
-	FVector N = (Up - Tangent * Dot);
-	if (N.SizeSquared() <= KINDA_SMALL_NUMBER)
-	{
-		// Up was nearly parallel to tangent — pick any perpendicular vector
-		FVector Axis1, Axis2;
-		Tangent.FindBestAxisVectors(Axis1, Axis2);
-		N = Axis1; // just pick one of them
-	}
-	return N.GetSafeNormal();
-}
-
 void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLength, const float SplineLength, const int32 LoopSize)
 {
-	const int32 NumFrames = LoopSize + 1; // we need start frame for each mesh plus final frame
+	// Determine the number of points (frames) to generate. For N segments, we need N+1 points.
+	const int32 NumFrames = LoopSize + 1;
 
-	// spacing between mesh starts (equal spacing)
+	// Calculate the distance between each frame along the spline.
 	const float Spacing = SplineLength / (float)LoopSize;
 
-	// 1) Sample positions and tangents at evenly spaced distances
+	// 1) Sample positions and tangents at evenly spaced distances along the spline.
+	// These will form the "spine" for our generated meshes.
 	TArray<FVector> Positions; Positions.SetNumUninitialized(NumFrames);
 	TArray<FVector> Tangents;  Tangents.SetNumUninitialized(NumFrames);
 
 	for (int32 k = 0; k < NumFrames; ++k)
 	{
-		const float Dist = FMath::Clamp(k * Spacing, 0.f, SplineLength);
+		const float Dist = k * Spacing;
+		// We don't need to clamp here as k * Spacing will not exceed SplineLength.
 		Positions[k] = SplineComponent->GetLocationAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::Local);
 		Tangents[k] = SplineComponent->GetTangentAtDistanceAlongSpline(Dist, ESplineCoordinateSpace::Local).GetSafeNormal();
 	}
 
-	FVector InitialUp = FVector::UpVector;
-
-	// 2) Build normals using parallel transport
+	// 2) Build normals using Parallel Transport to create smooth, twist-free orientation frames.
 	TArray<FVector> Normals; Normals.SetNumUninitialized(NumFrames);
-	TArray<FQuat>  FrameRot; FrameRot.SetNumUninitialized(NumFrames); // rotation aligning X->tangent and Z->normal (optional)
+	FVector InitialUp = FVector::UpVector; // Define an initial "up" direction.
 
-	// Initial normal (orthonormalize provided InitialUp)
-	Normals[0] = OrthoNormalFromUp(Tangents[0], InitialUp);
-
-	// store a rotation for completeness (useful for debugging)
-	{
-		const FMatrix M0 = FRotationMatrix::MakeFromXZ(Tangents[0], Normals[0]);
-		FrameRot[0] = FQuat(M0);
-	}
+	// The first normal is calculated by making the InitialUp vector orthogonal to the first tangent.
+	Normals[0] = (InitialUp - Tangents[0] * FVector::DotProduct(InitialUp, Tangents[0])).GetSafeNormal();
 
 	for (int32 k = 1; k < NumFrames; ++k)
 	{
-		const FVector PrevT = Tangents[k - 1];
-		const FVector CurT = Tangents[k];
+		const FVector PrevTangent = Tangents[k - 1];
+		const FVector CurrentTangent = Tangents[k];
 
-		// clamp dot for safety
-		const float Dot = FMath::Clamp(FVector::DotProduct(PrevT, CurT), -1.0f, 1.0f);
+		// Calculate the rotation that transforms the previous tangent to the current one.
+		const FQuat DeltaRotation = FQuat::FindBetweenNormals(PrevTangent, CurrentTangent);
 
-		if (FMath::Abs(Dot - 1.0f) < 1e-6f)
-		{
-			// tangents nearly identical -> no rotation
-			Normals[k] = Normals[k - 1];
-		}
-		else if (FMath::Abs(Dot + 1.0f) < 1e-6f)
-		{
-			// 180-degree flip: choose a rotation axis perpendicular to PrevT
+		// Apply this rotation to the previous normal to get the new normal.
+		Normals[k] = DeltaRotation.RotateVector(Normals[k - 1]);
 
-			FVector Axis1, Axis2;
-			PrevT.FindBestAxisVectors(Axis1, Axis2);
-			const FVector AnyPerp = Axis1;
-			const FQuat Q = FQuat(AnyPerp.GetSafeNormal(), PI);
-			Normals[k] = Q.RotateVector(Normals[k - 1]);
-		}
-		else
-		{
-			const FVector Axis = FVector::CrossProduct(PrevT, CurT);
-			const float AxisLen = Axis.Size();
-
-			if (AxisLen <= KINDA_SMALL_NUMBER) // numerically unstable; treat as identity
-			{
-				Normals[k] = Normals[k - 1];
-			}
-			else
-			{
-				const FVector AxisNorm = Axis / AxisLen;
-				const float Angle = FMath::Acos(Dot);
-				const FQuat Q(AxisNorm, Angle);
-				Normals[k] = Q.RotateVector(Normals[k - 1]);
-			}
-		}
-
-		// re-orthonormalize to avoid drift: make Normal perpendicular to CurT
-		{
-			const float d = FVector::DotProduct(Normals[k], CurT);
-			Normals[k] = (Normals[k] - CurT * d).GetSafeNormal();
-		}
-
-		const FMatrix Mk = FRotationMatrix::MakeFromXZ(CurT, Normals[k]);
-		FrameRot[k] = FQuat(Mk);
+		// Re-orthonormalize to prevent floating-point drift from accumulating.
+		Normals[k] = (Normals[k] - CurrentTangent * FVector::DotProduct(Normals[k], CurrentTangent)).GetSafeNormal();
 	}
 
-	// 3) If closed loop, correct accumulated drift by distributing a rotation
+	// 3) If the spline is a closed loop, distribute the accumulated rotational error.
 	if (SplineComponent->IsClosedLoop())
 	{
-		// Last frame tangent should match first, but normal may drift.
-		// Compute quaternion that rotates last normal to first normal, about the last tangent.
+		// The start and end tangents are identical, but floating point errors can cause the normals to drift.
 		const FVector LastNormal = Normals.Last();
 		const FVector FirstNormal = Normals[0];
 
-		// If they are already equal, no correction needed.
-		if (!LastNormal.Equals(FirstNormal, 1e-4f))
+		// Calculate the total correction rotation needed to align the last normal with the first.
+		const FQuat TotalCorrection = FQuat::FindBetweenNormals(LastNormal, FirstNormal);
+
+		// Apply the correction incrementally along the spline using Slerp.
+		for (int32 j = 0; j < NumFrames; ++j)
 		{
-			// compute correction quaternion that brings LastNormal -> FirstNormal
-			// axis can be tangent direction (preferably), but general rotation between vectors works:
-			const float DotNN = FMath::Clamp(FVector::DotProduct(LastNormal, FirstNormal), -1.f, 1.f);
-			if (FMath::Abs(DotNN - 1.f) > 1e-6f)
-			{
-				// rotation that maps LastNormal to FirstNormal
-				const FVector CorrAxis = FVector::CrossProduct(LastNormal, FirstNormal);
-				const float CorrAxisLen = CorrAxis.Size();
+			const float Alpha = (float)j / (float)(NumFrames - 1);
+			const FQuat StepCorrection = FQuat::Slerp(FQuat::Identity, TotalCorrection, Alpha);
 
-				FQuat CorrQuat = FQuat::Identity;
-				if (CorrAxisLen > KINDA_SMALL_NUMBER)
-				{
-					const FVector CorrAxisNorm = CorrAxis / CorrAxisLen;
-					const float CorrAngle = FMath::Acos(DotNN);
-					CorrQuat = FQuat(CorrAxisNorm, CorrAngle);
-				}
-				else
-				{
-					// vectors anti-parallel or parallel - choose small correction around tangent
-					CorrQuat = FQuat(Tangents.Last(), 0.f);
-				}
+			Normals[j] = StepCorrection.RotateVector(Normals[j]);
 
-				// Distribute correction: for frame j, apply slerp(Identity, CorrQuat, t) where t = j/(N-1)
-				for (int32 j = 0; j < NumFrames; ++j)
-				{
-					const float t = (float)j / (float)(NumFrames - 1);
-					const FQuat Step = FQuat::Slerp(FQuat::Identity, CorrQuat, t);
-					Normals[j] = Step.RotateVector(Normals[j]);
-
-					// re-orthonormalize to be safe
-					const FVector Tj = Tangents[j];
-					const float d = FVector::DotProduct(Normals[j], Tj);
-					Normals[j] = (Normals[j] - Tj * d).GetSafeNormal();
-					FrameRot[j] = FQuat(FRotationMatrix::MakeFromXZ(Tj, Normals[j]));
-				}
-			}
+			// Re-orthonormalize one last time.
+			const FVector Tj = Tangents[j];
+			Normals[j] = (Normals[j] - Tj * FVector::DotProduct(Normals[j], Tj)).GetSafeNormal();
 		}
 	}
 
-	// 4) Spawn SplineMeshComponents using frames. For each segment i: start frame = i, end frame = i+1
+	// 4) Spawn SplineMeshComponents using the generated frames.
+	// Each segment 'i' uses frame 'i' for its start and frame 'i+1' for its end.
 	SplineMeshComponents.Reset(LoopSize);
 
 	for (int32 i = 0; i < LoopSize; ++i)
 	{
-		const float StartDistance = i * Spacing;
-		const float EndDistanceUnclamped = StartDistance + MeshLength;
-		const bool bIsOverhang = EndDistanceUnclamped > SplineLength;
-		const float EndDistanceClamped = bIsOverhang ? SplineLength : EndDistanceUnclamped;
-		const float Overhang = bIsOverhang ? (EndDistanceUnclamped - SplineLength) : 0.f;
-
-		const FVector StartLocation = Positions[i];
-		FVector EndLocation;
-		if (!bIsOverhang)
-		{
-			EndLocation = Positions[i + 1];
-		}
-		else
-		{
-			// extrapolate along final tangent by Overhang
-			const FVector SplineEndPos = SplineComponent->GetLocationAtDistanceAlongSpline(SplineLength, ESplineCoordinateSpace::Local);
-			const FVector SplineEndTan = SplineComponent->GetTangentAtDistanceAlongSpline(SplineLength, ESplineCoordinateSpace::Local).GetSafeNormal();
-			EndLocation = SplineEndPos + SplineEndTan * Overhang;
-		}
-
-		const FVector StartTangent = Tangents[i] * MeshLength; // restore magnitude
-		FVector EndTangent;
-		if (!bIsOverhang)
-		{
-			EndTangent = Tangents[i + 1] * MeshLength;
-		}
-		else
-		{
-			EndTangent = SplineComponent->GetTangentAtDistanceAlongSpline(SplineLength, ESplineCoordinateSpace::Local).GetClampedToMaxSize(MeshLength);
-		}
+		const int32 StartIndex = i;
+		const int32 EndIndex = i + 1;
 
 		// Average normals for the segment and pass to SplineMeshComponent -> SetSplineUpDir
 		const FVector AvgNormal = (Normals[i] + Normals[i + 1]).GetSafeNormal();
 
-		// Create & configure SplineMeshComponent
-		const FString SegmentName = FString::Printf(TEXT("SplineMesh%d"), i);
-		
+		// The magnitude of the tangent for a spline mesh controls its curvature at the endpoints.
+		// A good default is the distance between the points.
+		const float TangentMagnitude = (Positions[EndIndex] - Positions[StartIndex]).Size();
+
+		// NOTE: Assumes your FAedificMeshSegment struct and CreateSegment function are updated
+		// to handle separate Start and End Up Vectors for best results.
 		FAedificMeshSegment Segment;
-		Segment.SegmentName			= SegmentName;
-		Segment.StartLocation		= StartLocation;
-		Segment.EndLocation			= EndLocation;
-		Segment.StartTangent		= StartTangent;
-		Segment.EndTangent			= EndTangent;
-		Segment.UpVector			= AvgNormal;
-		Segment.StartRollDegrees	= 0.f;
-		Segment.EndRollDegrees		= 0.f;
-		Segment.StartScale			= FVector2D(1.f);
-		Segment.EndScale			= FVector2D(1.f);
+		Segment.SegmentName = FString::Printf(TEXT("SplineMesh%d"), i);
+		Segment.StartLocation = Positions[StartIndex];
+		Segment.StartTangent = Tangents[StartIndex] * TangentMagnitude;
+		Segment.UpVector =  //AvgNormal;
+		Segment.EndLocation = Positions[EndIndex];
+		Segment.EndTangent = Tangents[EndIndex] * TangentMagnitude;
+
+		// Set other properties as needed
+		Segment.StartRollDegrees = 0.f;
+		Segment.EndRollDegrees = 0.f;
+		Segment.StartScale = FVector2D::UnitVector;
+		Segment.EndScale = FVector2D::UnitVector;
 
 		CreateSegment(Segment);
 	}
@@ -580,7 +476,10 @@ void AAedificSplineContinuum::EmptyMesh()
 	{
 		for (USplineMeshComponent* Mesh : SplineMeshComponents)
 		{
-			Mesh->DestroyComponent();
+			if (Mesh->IsValidLowLevelFast())
+			{
+				Mesh->DestroyComponent();
+			}
 		}
 
 		SplineMeshComponents.Reset();
