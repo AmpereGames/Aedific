@@ -43,15 +43,15 @@ struct FAedificMeshSegment
 
 	FAedificMeshSegment()
 	{
-		SegmentName = TEXT("");
-		StartLocation = FVector::ZeroVector;
-		EndLocation = FVector::ZeroVector;
-		StartTangent = FVector::ZeroVector;
-		EndTangent = FVector::ZeroVector;
-		UpVector = FVector::UpVector;
-		StartRollDegrees = 0.f;
-		EndRollDegrees = 0.f;
-		StartScale = FVector2D(1.f);
-		EndScale = FVector2D(1.f);
+		SegmentName =		TEXT("");
+		StartLocation =		FVector::ZeroVector;
+		EndLocation =		FVector::ZeroVector;
+		StartTangent =		FVector::ZeroVector;
+		EndTangent =		FVector::ZeroVector;
+		UpVector =			FVector::UpVector;
+		StartRollDegrees =	0.f;
+		EndRollDegrees =	0.f;
+		StartScale =		FVector2D::UnitVector;
+		EndScale =			FVector2D::UnitVector;
 	}
 };

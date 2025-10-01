@@ -274,7 +274,6 @@ static float GetRelativeRoll(USplineComponent* Component, const FRotator& Rotati
 	FMatrix Matrix(ForwardVector, RightVector, UpVector, FVector::ZeroVector);
 
 	return Matrix.Rotator().Roll;
-
 }
 
 void AAedificSplineContinuum::GenerateMesh(const float MeshLength, const float SplineLength, const int32 LoopSize)
@@ -329,6 +328,25 @@ void AAedificSplineContinuum::GenerateMesh(const float MeshLength, const float S
 		CreateSegment(Segment);
 	}
 }
+
+static float CalculateRollInDegrees (const FVector& Tangent, const FVector& Normal, const FVector& ReferenceUpVector)
+{
+	// 1. Project the ReferenceUpVector onto the plane perpendicular to the tangent.
+	// This gives us the spline mesh's default, non-rolled "up" direction.
+	const FVector DefaultUp = (ReferenceUpVector - Tangent * FVector::DotProduct(ReferenceUpVector, Tangent)).GetSafeNormal();
+
+	// 2. Create an orthonormal basis on that plane with a "right" vector (binormal).
+	const FVector Binormal = FVector::CrossProduct(Tangent, DefaultUp);
+
+	// 3. Calculate the angle between the DefaultUp and our desired Normal on that plane.
+	// We get the cosine of the angle from the dot product.
+	const float CosAngle = FVector::DotProduct(DefaultUp, Normal);
+	// We get the sine of the angle by projecting the Normal onto the Binormal.
+	const float SinAngle = FVector::DotProduct(Binormal, Normal);
+
+	// 4. Use Atan2 to find the angle in radians and convert to degrees.
+	return -FMath::RadiansToDegrees(FMath::Atan2(SinAngle, CosAngle));
+};
 
 void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLength, const float SplineLength, const int32 LoopSize)
 {
@@ -406,28 +424,37 @@ void AAedificSplineContinuum::GenerateMeshParallelTransport(const float MeshLeng
 		const int32 StartIndex = i;
 		const int32 EndIndex = i + 1;
 
-		// Average normals for the segment and pass to SplineMeshComponent -> SetSplineUpDir
-		const FVector AvgNormal = (Normals[i] + Normals[i + 1]).GetSafeNormal();
+		const FVector StartTangentVec = Tangents[StartIndex];
+		const FVector EndTangentVec = Tangents[EndIndex];
+		const FVector StartNormalVec = Normals[StartIndex];
+		const FVector EndNormalVec = Normals[EndIndex];
 
-		// The magnitude of the tangent for a spline mesh controls its curvature at the endpoints.
+		// The single "UpVector" for SetSplineUpDir acts as a reference frame.
+		// Averaging the start and end normals is a reasonable choice for this reference.
+		const FVector ReferenceUp = (StartNormalVec + EndNormalVec).GetSafeNormal();
+
+		// The magnitude of the tangent for a spline mesh controls its curvature.
 		// A good default is the distance between the points.
 		const float TangentMagnitude = (Positions[EndIndex] - Positions[StartIndex]).Size();
 
-		// NOTE: Assumes your FAedificMeshSegment struct and CreateSegment function are updated
-		// to handle separate Start and End Up Vectors for best results.
-		FAedificMeshSegment Segment;
-		Segment.SegmentName = FString::Printf(TEXT("SplineMesh%d"), i);
-		Segment.StartLocation = Positions[StartIndex];
-		Segment.StartTangent = Tangents[StartIndex] * TangentMagnitude;
-		Segment.UpVector =  //AvgNormal;
-		Segment.EndLocation = Positions[EndIndex];
-		Segment.EndTangent = Tangents[EndIndex] * TangentMagnitude;
+		const float StartRoll = CalculateRollInDegrees(StartTangentVec, StartNormalVec, ReferenceUp);
+		const float EndRoll = CalculateRollInDegrees(EndTangentVec, EndNormalVec, ReferenceUp);
 
-		// Set other properties as needed
-		Segment.StartRollDegrees = 0.f;
-		Segment.EndRollDegrees = 0.f;
-		Segment.StartScale = FVector2D::UnitVector;
-		Segment.EndScale = FVector2D::UnitVector;
+		FAedificMeshSegment Segment;
+		Segment.SegmentName		= FString::Printf(TEXT("SplineMesh%d"), i);
+		Segment.UpVector		= ReferenceUp; // For SetSplineUpDir()
+
+		Segment.StartLocation	= Positions[StartIndex];
+		Segment.StartTangent	= StartTangentVec * TangentMagnitude;
+		Segment.EndLocation		= Positions[EndIndex];
+		Segment.EndTangent		= EndTangentVec * TangentMagnitude;
+
+		// Calculate the roll needed at the start and end of the segment.
+		Segment.StartRollDegrees = StartRoll;
+		Segment.EndRollDegrees = EndRoll;
+
+		Segment.StartScale	= FVector2D::UnitVector;
+		Segment.EndScale	= FVector2D::UnitVector;
 
 		CreateSegment(Segment);
 	}
