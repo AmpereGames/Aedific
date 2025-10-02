@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Obiwan Medeiros.
+// Copyright (c) 2025 Ampere Games.
 
 #include "Aedific.h"
 

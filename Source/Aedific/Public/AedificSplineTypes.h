@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Pixane.
+// Copyright (c) 2025 Ampere Games.
 
 #pragma once
 
