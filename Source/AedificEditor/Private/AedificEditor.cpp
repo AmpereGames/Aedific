@@ -27,14 +27,14 @@ void FAedificEditorModule::StartupModule()
 
 void FAedificEditorModule::ShutdownModule()
 {
-	// Clean the Editor Style.
-	FAedificEditorStyle::Shutdown();
-
 	// Unregister the custom Actor Placement category.
 	IPlacementModeModule::Get().UnregisterPlacementCategory("Aedific");
 
 	// Clean the module.
 	FModuleManager::Get().OnModulesChanged().RemoveAll(this);
+
+	// Clean the Editor Style.
+	FAedificEditorStyle::Shutdown();
 }
 
 #undef LOCTEXT_NAMESPACE
